@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no,maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="theme-color" content="#0a0818">
+<title>Shattermoon Vanguard</title>
+<link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head><body>
+<canvas id="c"></canvas>
+
+<div id="hud" class="hidden">
+  <canvas id="radar" width="180" height="180"></canvas>
+  <div id="objective"><div id="objTitle">RIFT BREACH</div><div id="objSub"></div><div id="objBar"><i></i></div></div>
+  <div id="bossbar" class="hidden"><div id="bossName">THE HOLLOW REGENT</div><div class="bar"><i id="bossShield"></i><i id="bossHp"></i></div></div>
+  <div id="crosshair"><i></i><i></i><i></i><i></i><b id="hitmark"></b></div>
+  <div id="dmgLayer"></div>
+  <div id="killfeed"></div>
+  <div id="banner"></div>
+  <div id="vitals"><div class="vlabel"><span>GUARDIAN</span><span id="hpNum">100</span></div><div id="shieldBar"><i></i><s></s></div><div id="hpBar"><i></i></div><div id="powerTag">✦ 100</div></div>
+  <div id="partner" class="hidden"></div>
+  <div id="revive" class="hidden"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17"/></svg><span></span></div>
+  <div id="ammoBig"><b>0</b><small></small></div>
+  <div id="abilities">
+    <div class="ab" id="abGren"><span class="ico">✸</span><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17"/></svg><em class="pr" data-kb="Q" data-ps="L1" data-xb="LB">Q</em></div>
+    <div class="ab" id="abMelee"><span class="ico">✊</span><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17"/></svg><em class="pr" data-kb="C" data-ps="R1" data-xb="RB">C</em></div>
+    <div class="ab super" id="abSuper"><span class="ico">✦</span><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17"/></svg><em class="pr" data-kb="F" data-ps="L1+R1" data-xb="LB+RB">F</em></div>
+  </div>
+  <div id="weapons"></div>
+  <div id="vignette"></div>
+  <div id="hint"></div>
+  <button id="tPause" class="tbtn small">❚❚</button>
+  <button id="tInv" class="tbtn small">⚙</button>
+</div>
+
+<div id="touch" class="hidden">
+  <div id="stickBase"><div id="stickKnob"></div></div>
+  <div id="tcluster">
+  <button class="tbtn" id="bFire">FIRE</button>
+  <button class="tbtn" id="bJump">⤒</button>
+  <button class="tbtn" id="bReload">⟳</button>
+  <button class="tbtn" id="bGren">✸</button>
+  <button class="tbtn" id="bMelee">✊</button>
+  <button class="tbtn" id="bSuper">✦</button>
+  <button class="tbtn" id="bAds">◎</button>
+  <button class="tbtn" id="bSwap">⇄</button>
+  </div>
+</div>
+
+<div id="title" class="screen">
+  <div class="logo"><div class="moonmark"></div><h1>SHATTERMOON<br><span>VANGUARD</span></h1><p class="tag">Hold the line beneath the broken moon.</p></div>
+  <div id="classPick"></div>
+  <div class="row">
+    <button class="btn primary" id="playBtn">▶ DEPLOY</button>
+    <button class="btn" id="coopBtn">👥 CO-OP</button>
+    <button class="btn" id="gearBtn">⚙ GEAR</button>
+    <button class="btn" id="setBtn">☰ SETTINGS</button>
+    <button class="btn" id="helpBtn">? HOW TO PLAY</button>
+  </div>
+  <div id="titleStats"></div>
+  <div id="coopTag" class="hidden"></div>
+  <div id="padHint" class="hidden"></div>
+</div>
+
+<div id="coop" class="screen hidden"><div class="panel">
+  <h2>CO-OP</h2>
+  <p class="sub">Up to 4 players, each on their own phone, tablet or computer. One player hosts and shares the code; everyone else joins with it.</p>
+  <label class="sl">Your name <input id="coopName" maxlength="12" autocomplete="off" spellcheck="false"></label>
+  <div class="row"><button class="btn primary" id="hostBtn">★ HOST GAME</button></div>
+  <div id="hostCode" class="hidden"><span>ROOM CODE</span><b></b><small>Waiting for your partner to join…</small></div>
+  <div class="or">— or join a friend —</div>
+  <div class="joinRow"><input id="joinCode" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false" autocapitalize="characters"><button class="btn" id="joinBtn">JOIN</button></div>
+  <div id="osk"></div>
+  <div id="coopRoster"></div>
+  <div id="coopStatus"></div>
+  <div class="row"><button class="btn hidden" id="readyBtn">READY UP</button><button class="btn primary hidden" id="coopStart">▶ DEPLOY FIRETEAM</button></div>
+  <div class="row"><button class="btn danger" id="leaveBtn">✕ LEAVE CO-OP</button><button class="btn" id="coopClose">⟵ BACK</button></div>
+</div></div>
+
+<div id="settings" class="screen hidden"><div class="panel">
+  <h2>SETTINGS</h2>
+  <div class="setRow"><span>Graphics quality</span><button class="btn small" id="qualBtn">HIGH</button></div>
+  <label class="sl">Look sensitivity (mouse / touch) <input type="range" id="sens" min="0.3" max="2.5" step="0.1" value="1"></label>
+  <label class="sl">Controller look sensitivity <input type="range" id="padSens" min="0.3" max="2.5" step="0.1" value="1"></label>
+  <div class="setRow"><span>Invert look (Y axis)</span><button class="btn small" id="invBtn">OFF</button></div>
+  <div class="setRow"><span>Controller aim assist</span><button class="btn small" id="aaBtn">ON</button></div>
+  <div class="setRow"><span>Controller vibration</span><button class="btn small" id="rumBtn">ON</button></div>
+  <div class="setRow"><span>Sound</span><button class="btn small" id="sndBtn">ON</button></div>
+  <button class="btn primary" id="setClose">DONE</button>
+</div></div>
+
+<div id="pause" class="screen hidden"><div class="panel">
+  <h2>PAUSED</h2>
+  <button class="btn primary" id="resumeBtn">▶ RESUME</button>
+  <button class="btn" id="pGearBtn">⚙ GEAR</button>
+  <button class="btn" id="pHelpBtn">? CONTROLS</button>
+  <button class="btn" id="muteBtn">🔊 SOUND ON</button>
+  <button class="btn" id="pSetBtn">☰ SETTINGS</button>
+  <button class="btn danger" id="quitBtn">⟵ ABANDON RUN</button>
+</div></div>
+
+<div id="inv" class="screen hidden"><div class="panel wide">
+  <div class="invHead"><h2>GEAR</h2><div id="invPower"></div><button class="btn" id="bestBtn">★ EQUIP BEST</button><button class="btn" id="invClose">✕ CLOSE</button></div>
+  <div class="invBody">
+    <div id="invSlots"></div>
+    <div id="invList"></div>
+    <div id="invDetail"></div>
+  </div>
+</div></div>
+
+<div id="help" class="screen hidden"><div class="panel">
+  <h2>HOW TO PLAY</h2>
+  <div class="helpCols">
+    <div><h3>Computer</h3><ul>
+      <li><b>WASD</b> move · <b>Shift</b> sprint</li>
+      <li><b>Mouse</b> aim · <b>Left click</b> fire · <b>Right click</b> aim down sights</li>
+      <li><b>Space</b> jump · press again in air to double-jump · hold to glide</li>
+      <li><b>R</b> reload · <b>1 2 3</b> / wheel swap weapon</li>
+      <li><b>Q</b> grenade · <b>C</b> melee · <b>F</b> Super</li>
+      <li><b>Tab</b> gear · <b>Esc</b> pause</li></ul></div>
+    <div><h3>Controller (PS5 / Xbox / Backbone)</h3><ul>
+      <li><b>L stick</b> move (click to sprint) · <b>R stick</b> aim</li>
+      <li><b>R2/RT</b> fire · <b>L2/LT</b> aim down sights</li>
+      <li><b>✕/A</b> jump · <b>□/X</b> reload · hold to revive · <b>△/Y</b> swap</li>
+      <li><b>L1/LB</b> grenade · <b>R1/RB</b> or <b>○/B</b> melee · <b>L1+R1</b> Super</li>
+      <li><b>D-pad</b> ↑ heavy · ← → weapons · ↓ emote · <b>Options</b> pause · <b>Share/View</b> gear</li></ul></div>
+    <div><h3>iPhone</h3><ul>
+      <li><b>Left thumb</b> anywhere on the left: move (push far to sprint)</li>
+      <li><b>Right thumb</b> drag: aim (you can drag on FIRE too)</li>
+      <li><b>FIRE</b> hold to shoot · <b>⤒</b> jump / double / hold to glide</li>
+      <li><b>✸</b> grenade · <b>✊</b> melee · <b>✦</b> Super when full</li>
+      <li><b>⇄</b> swap · <b>⟳</b> reload · <b>◎</b> aim down sights</li></ul></div>
+  </div>
+  <p>Survive the waves, aim for the glowing heads (<span style="color:#ffd84a">yellow numbers</span> = critical hits), and break shields faster with a matching element. Kills charge your Super. Grab the spinning <b>engrams</b> enemies drop — they become new weapons. Open <b>Gear</b> to equip them and raise your Power. Wave 6 brings the boss.</p>
+  <button class="btn primary" id="helpClose">GOT IT</button>
+</div></div>
+
+<div id="death" class="screen hidden"><div class="panel">
+  <h2 class="red">YOU FELL</h2><p id="deathMsg"></p><div id="deathCount"></div>
+</div></div>
+
+<div id="results" class="screen hidden"><div class="panel">
+  <h2 id="resTitle">VICTORY</h2><div id="resStats"></div>
+  <div class="row"><button class="btn primary" id="againBtn">↻ PLAY AGAIN</button><button class="btn" id="rGearBtn">⚙ GEAR</button><button class="btn" id="homeBtn">⌂ TITLE</button></div>
+</div></div>
+
+<div id="toasts"></div>
+<div id="rotate"><span>↻<br>Rotate to landscape to play<br><small>Shattermoon Vanguard plays sideways on iPhone and iPad</small></span></div>
+<div id="loading">LOADING…</div>
+<script src="vendor/peerjs.min.js"></script>
+<script type="module" src="game.js"></script>
+</body></html>
