@@ -5,6 +5,7 @@ import { QUALITY, Q_ORDER, createPost } from './gfx.js';
 import * as M from './models.js';
 import * as L from './loot.js';
 import { sfx, initAudio, setMuted, isMuted } from './audio.js';
+import * as ACC from './account.js';
 
 const $ = id => document.getElementById(id);
 const V3 = THREE.Vector3;
@@ -18,12 +19,16 @@ const START_WAVE = Math.max(1, parseInt(params.get('wave') || '1', 10));
 const IS_IPAD = /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const IS_TOUCH = params.has('touch') || IS_IPAD || ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 const BOSS_WAVE = DEBUG ? 3 : 6;
+// Optional Sign in with Apple (iOS app only). Guest is the default; each Apple ID gets its own save slot.
+let ACCOUNT = ACC.getAccount();
+const GUEST_KEY = 'shattermoon_vanguard_v1';
+const SAVE_KEY = ACC.saveKeyFor(GUEST_KEY, ACCOUNT);
 const MAX_ALIVE = IS_TOUCH ? 11 : 15;
 
 // ---------------- Renderer ----------------
 const canvas = $('c');
 // quality: saved choice, else auto (touch devices start on 'medium', desktop on 'high'); ?q=low|medium|high overrides
-let QNAME = (() => { const p = params.get('q'); if (QUALITY[p]) return p; try { const sv = JSON.parse(localStorage.getItem('shattermoon_vanguard_v1') || '{}'); if (QUALITY[sv.quality]) return sv.quality; } catch {} return IS_TOUCH ? 'medium' : 'high'; })();
+let QNAME = (() => { const p = params.get('q'); if (QUALITY[p]) return p; try { const sv = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'); if (QUALITY[sv.quality]) return sv.quality; } catch {} return IS_TOUCH ? 'medium' : 'high'; })();
 let Qs = QUALITY[QNAME];
 let post = null;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !IS_TOUCH && !Qs.post, powerPreference: 'high-performance', stencil: false });
@@ -70,12 +75,15 @@ addEventListener('resize', resize);
 if (IS_TOUCH) document.body.classList.add('touchmode'); if (IS_IPAD) document.body.classList.add('ipad');
 
 // ---------------- Save ----------------
-const SAVE_KEY = 'shattermoon_vanguard_v1';
 function defaultSave() { const inv = L.starterLoadout('flare'); return { cls: 'flare', inv, equipped: inv.map(w => w.id), best: { wave: 0, kills: 0, wins: 0 }, sens: 1, muted: false }; }
 let save;
-try { save = JSON.parse(localStorage.getItem(SAVE_KEY)) || defaultSave(); } catch { save = defaultSave(); }
+try { save = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch { save = null; }
+// first sign-in on this device: carry the guest's progress over into the Apple ID's save
+if (!save && ACCOUNT) { try { save = JSON.parse(localStorage.getItem(GUEST_KEY)); if (save) save.updatedAt = 0; } catch { save = null; } }
+if (!save) save = defaultSave();
 if (!save.inv || !save.equipped || save.inv.length < 3) save = defaultSave();
-function persist() { try { save.quality = QNAME; localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch {} }
+if (ACCOUNT && !save.name && ACCOUNT.name) save.name = ACCOUNT.name.slice(0, 12);
+function persist(local) { try { save.quality = QNAME; save.updatedAt = Date.now(); localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch {} if (ACCOUNT && !local) { const { quality, ...rest } = save; ACC.cloudPush(ACCOUNT, rest); } }
 setMuted(!!save.muted);
 const getW = id => save.inv.find(w => w.id === id);
 const equipped = () => save.equipped.map(getW);
@@ -1317,9 +1325,46 @@ function updateHud(dt) {
 // ---------------- Title / class pick ----------------
 function renderTitle() {
   $('classPick').innerHTML = Object.entries(CLASSES).map(([k, c]) => `<div class="cls ${save.cls === k ? 'sel' : ''}" data-k="${k}" style="--el:${c.color}"><h3>${L.ELEMENTS[c.el].icon} ${c.name}</h3><p class="k">${c.desc}</p><p>✸ ${c.gren}</p><p class="x">✊ ${c.melee}</p><p>✦ ${c.sup}</p></div>`).join('');
+  renderAccount();
   $('titleStats').innerHTML = `POWER ✦ ${powerLevel()} · BEST WAVE ${save.best.wave || 0}/${BOSS_WAVE} · BOSS KILLS ${save.best.wins || 0} · ${save.inv.length} WEAPONS`;
 }
 $('classPick').addEventListener('click', e => { const c = e.target.closest('.cls'); if (!c) return; initAudio(); sfx.click(); save.cls = c.dataset.k; persist(); renderTitle(); if (NET.role === 'client') netSend({ t: 'cls', cls: save.cls }); else if (NET.role === 'host') broadcastRoster(); if (PAD.active) setPadFocus($('classPick').querySelector(`[data-k="${save.cls}"]`)); });
+
+// ---------------- Account (Sign in with Apple, iOS app only) ----------------
+function esc(t) { return String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+function renderAccount() {
+  const el = $('acct'); if (!el) return;
+  if (!ACC.APPLE_ENABLED) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  if (ACCOUNT) {
+    const who = ACCOUNT.name || ACCOUNT.email || 'Apple ID';
+    el.innerHTML = `<span class="acctWho">${ACC.APPLE_LOGO}<span>Signed in as <b>${esc(who)}</b>${ACC.IS_NATIVE_IOS ? ' · progress saved to iCloud' : ''}</span></span><button class="btn small" id="signOutBtn">SIGN OUT</button>`;
+  } else {
+    el.innerHTML = `<button id="appleBtn" class="appleBtn" type="button" aria-label="Sign in with Apple">${ACC.APPLE_LOGO}<span>Sign in with Apple</span></button><span class="acctGuest">Playing as guest · sign in to keep your progress on all your devices</span>`;
+  }
+}
+$('acct').addEventListener('click', async e => {
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.id === 'appleBtn') {
+    initAudio(); sfx.click(); t.disabled = true;
+    try { ACCOUNT = await ACC.signIn(); location.reload(); }
+    catch (err) { t.disabled = false; const m = String((err && (err.code || err.message)) || ''); if (!/CANCEL/i.test(m)) toast('Sign in with Apple didn\'t finish — you can keep playing as a guest', '#ff9a8a'); }
+  } else if (t.id === 'signOutBtn') {
+    sfx.click(); if (!confirm('Sign out? You\'ll play as a guest on this device. Your Apple ID progress stays saved.')) return;
+    ACC.signOut(); location.reload();
+  }
+});
+// pull newer progress from iCloud (another device may have played) — only while on the title screen
+async function cloudPull() {
+  if (!ACCOUNT || S.mode !== 'title' || coopActive()) return;
+  if (!(await ACC.verify(ACCOUNT))) { location.reload(); return; }
+  const remote = await ACC.cloudGet(ACCOUNT);
+  if (!remote || !remote.inv || !remote.equipped || remote.inv.length < 3) { if (!remote) persist(); return; }
+  if ((remote.updatedAt || 0) <= (save.updatedAt || 0) || S.mode !== 'title') return;
+  const q = save.quality; for (const k of Object.keys(save)) delete save[k]; Object.assign(save, remote); save.quality = q;
+  persist(true); setMuted(!!save.muted); loadWeapons(true); renderTitle(); toast('Progress synced from iCloud', '#9fdcff');
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') cloudPull(); });
 
 // ---------------- Inventory ----------------
 const invState = { slot: 0, sel: null };
@@ -1939,6 +1984,7 @@ function padAimTarget() {
 if (IS_TOUCH) setupTouch();
 applyQuality();
 renderTitle(); loadWeapons(true);
+if (ACCOUNT) setTimeout(cloudPull, 400);
 $('loading').remove();
 frame();
 // portrait on a touch device: the rotate prompt covers the game, so pause solo play behind it

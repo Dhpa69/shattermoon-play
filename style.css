@@ -250,3 +250,13 @@ body{font-family:"Rajdhani","Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,H
 /* menus: zoom panels and the title screen content */
 .tablet .screen>.panel,.tablet #title>*{zoom:var(--uim)}
 .tablet .screen>.panel{max-height:calc(96vh / var(--uim))}
+
+/* Sign in with Apple (iOS app only) — follows Apple HIG: white style on dark bg, Apple logo + "Sign in with Apple", system font, ≥44pt tall, same visual weight as other sign-in options */
+#acct{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+#acct.hidden{display:none}
+.appleBtn{pointer-events:auto;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:44px;min-width:220px;padding:0 18px;border:0;border-radius:8px;background:#fff;color:#000;font:600 17px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;letter-spacing:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.appleBtn:active{opacity:.75}.appleBtn:disabled{opacity:.6}
+.appleBtn .alogo{width:16px;height:19px;margin-top:-3px}
+.acctGuest{font-size:11px;letter-spacing:.08em;opacity:.7;max-width:260px;line-height:1.35}
+.acctWho{display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.08em;opacity:.9}
+.acctWho .alogo{width:13px;height:16px;margin-top:-2px}
