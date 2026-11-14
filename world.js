@@ -6,6 +6,8 @@ export const ARENA_R = 56;
 export const SUN_DIR = new THREE.Vector3(-0.5, 0.42, -1).normalize();
 export const FOG_COLOR = new THREE.Color(0x3b2a48);
 
+const _lightRot = new THREE.Matrix4().lookAt(new THREE.Vector3(), new THREE.Vector3(-0.5, 0.42, -1).normalize().negate(), new THREE.Vector3(0, 1, 0));
+const _lightInv = _lightRot.clone().invert(), _sp = new THREE.Vector3();
 function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 
 let _glowTex = null;
@@ -211,7 +213,7 @@ export function buildWorld(scene, renderer, Qs) {
     const a = (i / 22) * Math.PI * 2 + R() * 0.1, d = ARENA_R + 3 + R() * 6;
     addBox(Math.cos(a) * d, Math.sin(a) * d, 3 + R() * 3, 8 + R() * 16, 2 + R() * 2, { ry: a + R(), rz: (R() - 0.5) * 0.4, collide: false });
   }
-  const stoneMat = triplanar(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.03 }), T.stone, { scale: 0.3, bump: 0.45, macro: 0.12 });
+  const stoneMat = triplanar(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.03 }), T.stone, { scale: 0.3, bump: 0.5, macro: 0.12, ao: 0.42 });
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   const all = boxes.concat(deco);
   const inst = new THREE.InstancedMesh(boxGeo, stoneMat, all.length);
@@ -237,7 +239,7 @@ export function buildWorld(scene, renderer, Qs) {
   scene.add(trimInst);
 
   // ---------- Rocks ----------
-  const rockMat = triplanar(new THREE.MeshStandardMaterial({ color: 0x8a7a88, roughness: 0.9, flatShading: true }), T.stone, { scale: 0.45, bump: 0.4, macro: 0.12 });
+  const rockMat = triplanar(new THREE.MeshStandardMaterial({ color: 0x8a7a88, roughness: 0.9, flatShading: true }), T.stone, { scale: 0.45, bump: 0.45, macro: 0.12, ao: 0.3 });
   const rockGeo = displace(new THREE.IcosahedronGeometry(1, 1), 0.28, 1.7, 5);
   const RN = 90, rocks = new THREE.InstancedMesh(rockGeo, rockMat, RN);
   for (let i = 0; i < RN; i++) {
@@ -269,6 +271,69 @@ export function buildWorld(scene, renderer, Qs) {
     const g = glowSprite(0x4fc8ff, sz * 6, 0.32, 1.2); g.position.set(cx, cy + sz, cz); scene.add(g); crysGlows.push(g);
   }
   crys.count = ci; scene.add(crys);
+
+  // ---------- Scatter props (instanced; count scales with quality): pebbles, broken slabs, shard clusters ----------
+  // separate RNG so the arena layout (and colliders) stay identical across quality tiers
+  {
+    const S2 = rng(4242), sc = Qs.scatter ?? 1;
+    const blocked = (x, z, pad) => colliders.some(c => x > c.minX - pad && x < c.maxX + pad && z > c.minZ - pad && z < c.maxZ + pad);
+    const spot = (minD, maxD, pad) => { for (let k = 0; k < 12; k++) { const a = S2() * Math.PI * 2, d = minD + S2() * (maxD - minD), x = Math.cos(a) * d, z = Math.sin(a) * d; if (!blocked(x, z, pad)) return [x, z]; } return null; };
+    // pebbles cluster near ruins (where debris would fall): pick a collider, scatter around its footprint
+    const pebGeo = displace(new THREE.DodecahedronGeometry(1, 0), 0.25, 3.1, 77);
+    const pebMat = triplanar(new THREE.MeshStandardMaterial({ color: 0x8b7d8a, roughness: 0.95, flatShading: true }), T.stone, { scale: 0.9, bump: 0.3, macro: 0.2 });
+    const PB = Math.round(420 * sc), peb = new THREE.InstancedMesh(pebGeo, pebMat, PB); let pi = 0;
+    const cols = colliders.filter(c => (c.maxX - c.minX) < 12);
+    for (let i = 0; i < PB * 3 && pi < PB; i++) {
+      const c = cols[Math.floor(S2() * cols.length)]; if (!c) break;
+      const side = S2() * 4 | 0, t = S2(), off = 0.15 + Math.pow(S2(), 2) * 2.2;
+      let x = side < 2 ? c.minX + (c.maxX - c.minX) * t : side === 2 ? c.minX - off : c.maxX + off;
+      let z = side >= 2 ? c.minZ + (c.maxZ - c.minZ) * t : side === 0 ? c.minZ - off : c.maxZ + off;
+      if (Math.hypot(x, z) > ARENA_R - 1 || Math.hypot(x, z) < 8.6 || blocked(x, z, 0.05)) continue;
+      const s = 0.05 + Math.pow(S2(), 3) * 0.28;
+      e.set(S2() * 3, S2() * 3, S2() * 3); q.setFromEuler(e);
+      m4.compose(new THREE.Vector3(x, s * 0.35, z), q, new THREE.Vector3(s * (0.8 + S2() * 0.6), s * (0.5 + S2() * 0.5), s * (0.8 + S2() * 0.6)));
+      peb.setMatrixAt(pi, m4); peb.setColorAt(pi++, tmp.setRGB(0.75 + S2() * 0.3, 0.7 + S2() * 0.25, 0.78 + S2() * 0.3));
+    }
+    peb.count = pi; peb.receiveShadow = true; scene.add(peb);
+    // broken floor slabs / tilted flagstones
+    const SL = Math.round(70 * sc), slabs = new THREE.InstancedMesh(boxGeo, stoneMat, SL); let si = 0;
+    for (let i = 0; i < SL; i++) {
+      const p = spot(10, ARENA_R - 3, 0.8); if (!p) continue;
+      const w = 0.5 + S2() * 1.3, d = 0.4 + S2() * 1.1, h = 0.08 + S2() * 0.14;
+      e.set((S2() - 0.5) * 0.35, S2() * 3, (S2() - 0.5) * 0.35); q.setFromEuler(e);
+      m4.compose(new THREE.Vector3(p[0], h * 0.3, p[1]), q, new THREE.Vector3(w, h, d));
+      slabs.setMatrixAt(si, m4); slabs.setColorAt(si++, tmp.copy(base).lerp(warm, S2()).multiplyScalar(0.62 + S2() * 0.2));
+    }
+    slabs.count = si; slabs.receiveShadow = true; slabs.castShadow = Qs.shadows; scene.add(slabs);
+    // small glowing shard clusters on the floor (share the crystal material, so they pulse with it)
+    const SH = Math.round(90 * sc), shards = new THREE.InstancedMesh(crysGeo, crysMat, SH); let hi = 0;
+    for (let c = 0; c < SH / 4 && hi < SH; c++) {
+      const p = spot(9, ARENA_R - 2, 0.4); if (!p) continue; const n = 2 + (S2() * 4 | 0), sz = 0.12 + S2() * 0.2;
+      for (let k = 0; k < n && hi < SH; k++) {
+        const s = sz * (k ? 0.45 + S2() * 0.5 : 1);
+        e.set((S2() - 0.5) * 1.2, S2() * 3, (S2() - 0.5) * 1.2); q.setFromEuler(e);
+        m4.compose(new THREE.Vector3(p[0] + (S2() - 0.5) * sz * 2.5, -0.05, p[1] + (S2() - 0.5) * sz * 2.5), q, new THREE.Vector3(s * 0.35, s * 1.3, s * 0.35));
+        shards.setMatrixAt(hi++, m4);
+      }
+    }
+    shards.count = hi; scene.add(shards);
+  }
+
+  // ---------- Baked ground AO: darken the floor around ruin footprints (soft contact shadows, free at runtime) ----------
+  {
+    const foot = boxes.filter(b => b.collide || b.y - b.sy / 2 < 0.3).map(b => ({ x0: b.x - b.sx / 2, x1: b.x + b.sx / 2, z0: b.z - b.sz / 2, z1: b.z + b.sz / 2, h: Math.min(b.y + b.sy / 2, 6) }));
+    const colA = gGeo.attributes.color;
+    for (let i = 0; i < gp.count; i++) {
+      const x = gp.getX(i), z = gp.getZ(i); if (Math.hypot(x, z) > ARENA_R + 6) continue;
+      let occ = 0;
+      for (const f of foot) {
+        const dx = Math.max(f.x0 - x, 0, x - f.x1), dz = Math.max(f.z0 - z, 0, z - f.z1); const d = Math.hypot(dx, dz);
+        if (d > 3) continue; occ = Math.max(occ, Math.exp(-d * 1.15) * Math.min(1, 0.35 + f.h * 0.22));
+      }
+      const k = 1 - occ * 0.5; colA.setXYZ(i, colA.getX(i) * k, colA.getY(i) * k, colA.getZ(i) * k);
+    }
+    colA.needsUpdate = true;
+  }
 
   // ---------- Distant mountains + ruin silhouettes (unfogged, tinted by hand) ----------
   const ridge = (radius, base, height, seed, cTop, cBot, segs = 220) => {
@@ -324,9 +389,17 @@ export function buildWorld(scene, renderer, Qs) {
     ring.rotation.z += dt * 0.01; core.rotation.y += dt * 0.004;
     runeMat.opacity = 0.32 + Math.sin(t * 2) * 0.12; rune2.rotation.z += dt * 0.2; rune3.rotation.z -= dt * 0.12;
     crysMat.emissiveIntensity = 1.4 + Math.sin(t * 1.3) * 0.3;
-    // shadow camera follows the viewer
-    sun.target.position.set(cam.position.x, 0, cam.position.z); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 70);
+    // shadow camera follows the viewer, snapped to whole shadow-map texels in light space (no shimmering edges)
+    const tx = sun.userData.texel || 0.03;
+    _sp.set(cam.position.x, 0, cam.position.z).applyMatrix4(_lightInv); _sp.x = Math.round(_sp.x / tx) * tx; _sp.y = Math.round(_sp.y / tx) * tx; _sp.applyMatrix4(_lightRot);
+    sun.target.position.copy(_sp); sun.position.copy(_sp).addScaledVector(SUN_DIR, 70);
   });
 
-  return { colliders, sun, hemi, update: (dt, t, cam) => updaters.forEach(u => u(dt, t, cam)) };
+  // tighter shadow frustum on higher tiers = crisper shadows (it follows the player anyway)
+  const setShadowQuality = q => {
+    const h = q.shadowBox || 30; const c = sun.shadow.camera; c.left = -h; c.right = h; c.top = h; c.bottom = -h; c.updateProjectionMatrix();
+    sun.userData.texel = (2 * h) / Math.max(512, q.shadowRes || 2048); sun.shadow.bias = q.shadowRes > 2048 ? -0.0003 : -0.0005; sun.shadow.normalBias = 0.035;
+  };
+  setShadowQuality(Qs);
+  return { colliders, sun, hemi, setShadowQuality, update: (dt, t, cam) => updaters.forEach(u => u(dt, t, cam)) };
 }

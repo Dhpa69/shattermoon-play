@@ -260,3 +260,23 @@ body{font-family:"Rajdhani","Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,H
 .acctGuest{font-size:11px;letter-spacing:.08em;opacity:.7;max-width:260px;line-height:1.35}
 .acctWho{display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.08em;opacity:.9}
 .acctWho .alogo{width:13px;height:16px;margin-top:-2px}
+
+/* Apple Vision Pro (native visionOS app, or ?visionos): desktop HUD layout, scaled up a little for a window ~1-2 m away;
+   bigger gaze/pinch targets; controller card on the title; "Connect a game controller" prompt in a run */
+body.vision,html:has(body.vision){background:transparent}
+.vision #radar,.vision #objective,.vision #bossbar,.vision #killfeed,.vision #vitals,.vision #abilities,.vision #weapons,.vision #ammoBig,.vision #partner,.vision #hint,.vision #revive{zoom:var(--uim)}
+.vision #crosshair{transform:scale(var(--uim))}
+.vision .screen>.panel,.vision #title>*{zoom:var(--uim)}
+.vision .screen>.panel{max-height:calc(96vh / var(--uim))}
+.vision .btn{min-height:50px;padding:14px 24px}
+.vision .btn:hover,.vision .cls:hover{border-color:#ffffffaa;background:#ffffff22}
+.vision .cls{cursor:pointer}
+#visionPad{display:flex;flex-direction:column;align-items:center;gap:3px;margin-top:12px;padding:10px 18px;border:1px solid #9fdcff66;border-radius:14px;background:#0e1830b0;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);text-align:center;box-shadow:0 0 24px #59d0ff22}
+#visionPad b{font-size:16px;letter-spacing:.14em;color:#bfe9ff}
+#visionPad span{font-size:12px;letter-spacing:.06em;opacity:.9}
+#visionPad small{font-size:11px;opacity:.7;letter-spacing:.04em}
+#padNeed{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,#0a081888,#0a0818e6)}
+#padNeed .panel{max-width:min(620px,92vw);text-align:center;zoom:var(--uim)}
+#padNeed .padicon{font-size:46px;line-height:1}
+#padNeed .sub{font-size:14px;line-height:1.5;opacity:.9;margin:0}
+#padNeed .row{justify-content:center}
