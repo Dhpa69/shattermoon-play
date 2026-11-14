@@ -38,11 +38,17 @@ const canvas = $('c');
 // Graphics tier. QPREF is what the player picked ('auto' or a tier); QNAME is the tier actually used.
 // AUTO: phones -> medium · iPad Pro / Air (M-series class, big screen) + Apple Vision Pro -> high · desktop -> high.
 // ?q=low|medium|high|ultra overrides (tests).
+// Crash guard: if the previous session died before it ran 20 s (WebContent crash / GPU memory kill on device),
+// step the automatic quality down one tier for the next launch. Context loss does the same.
+const CG_KEY = 'sv_crashguard';
+const crashGuard = (() => { try { const g = JSON.parse(localStorage.getItem(CG_KEY) || '{}'); if (g.pending) g.level = Math.min(2, (g.level || 0) + 1); g.pending = 1; localStorage.setItem(CG_KEY, JSON.stringify(g)); return g; } catch { return { level: 0 }; } })();
+function crashGuardSave() { try { localStorage.setItem(CG_KEY, JSON.stringify(crashGuard)); } catch {} }
+setTimeout(() => { crashGuard.pending = 0; crashGuardSave(); }, 20000);
 function autoQuality() {
-  if (IS_VISION) return 'high';
-  const sw = Math.min(screen.width || 0, screen.height || 0);
-  if (IS_IPAD && sw >= 820) return 'high';
-  return IS_TOUCH ? 'medium' : 'high';
+  // conservative defaults: phones, iPads and Vision Pro start on MEDIUM (players can pick HIGH/ULTRA in Settings)
+  const base = IS_TOUCH || IS_VISION || IS_IPAD ? 'medium' : 'high';
+  const order = ['high', 'medium', 'low'];
+  return order[Math.min(order.length - 1, order.indexOf(base) + (crashGuard.level || 0))];
 }
 let QPREF = (() => { const p = params.get('q'); if (QUALITY[p]) return p; try { const sv = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'); if (QUALITY[sv.quality] || sv.quality === 'auto') return sv.quality; } catch {} return 'auto'; })();
 let QNAME = QPREF === 'auto' ? autoQuality() : QPREF;
@@ -1558,9 +1564,17 @@ let fpsAcc = 0, fpsN = 0, fpsCheck = 0, lowFpsStreak = 0;
 const fpsLog = [];
 const FIXED = params.has('fixedstep'); // test/capture mode: the harness advances time with __game.step()
 let frameMs = 0;
+let ctxLost = false;
+// WebGL context loss (GPU reset / memory pressure): stop rendering, save, and reload on a lower auto tier
+canvas.addEventListener('webglcontextlost', e => {
+  e.preventDefault(); ctxLost = true; crashGuard.level = Math.min(2, (crashGuard.level || 0) + 1); crashGuardSave(); persist(true);
+  setTimeout(() => { if (ctxLost) location.reload(); }, 2500);
+}, false);
+canvas.addEventListener('webglcontextrestored', () => { location.reload(); }, false);
 function frame() {
   if (FIXED) return;
   requestAnimationFrame(frame);
+  if (ctxLost) { clock.getDelta(); return; }
   tick(Math.min(clock.getDelta(), 0.05));
 }
 function tick(dt, draw = true) {
