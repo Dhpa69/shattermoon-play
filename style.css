@@ -1,6 +1,6 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 html,body{margin:0;height:100%;overflow:hidden;background:#0a0818;color:#eef;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;touch-action:none;overscroll-behavior:none}
-#c{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block}
 .hidden{display:none!important}
 #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;letter-spacing:.4em;background:#0a0818;z-index:99}
 /* HUD */

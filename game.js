@@ -553,6 +553,26 @@ function buildEnemyMesh(type, e) {
   else if (type === 'regent') { e.muzzle.position.set(0, 0, 0.3); P.core.add(e.muzzle); }
   else { e.muzzle.position.set(0, 0.1, 0.4); P.head.add(e.muzzle); }
   if (type === 'regent') g.scale.setScalar(1.0);
+  // Hit volumes come from the VISIBLE geometry, not from hand-tuned EDEF numbers (fixed rest-pose
+  // spheres drifted off the animated models: misses on the visible body, hits on empty air below it). Each body-part pivot's own meshes give a local box; every frame
+  // it rides the animated rig, and hitscan also ray-tests the actual meshes, so a shot under the crosshair hits what you see.
+  const hp = P.head, tp = P.torso, bp = P.hips || P.base;
+  if (hp && tp && bp) {
+    e.hbAnch = [hp, tp, bp].map(piv => {
+      const bb = new THREE.Box3(), tmp = new THREE.Box3();
+      for (const c of piv.children) if (c.isMesh) { if (!c.geometry.boundingBox) c.geometry.computeBoundingBox(); c.updateMatrix(); bb.union(tmp.copy(c.geometry.boundingBox).applyMatrix4(c.matrix)); }
+      const sz = bb.isEmpty() ? new V3(0.4, 0.4, 0.4) : bb.getSize(new V3());
+      return [piv, bb.isEmpty() ? new V3() : bb.getCenter(new V3()), (sz.x + sz.y + sz.z) / 6];
+    });
+    e.hb = [new V3(), new V3(), new V3()]; e.hbR = [0, 0, 0]; e.hbOk = false;
+    // every visible rig mesh is shootable; meshes under the head pivot are crits
+    const isUnder = (o, anc) => { for (let q = o; q; q = q.parent) if (q === anc) return true; return false; };
+    e.hitMeshes = [];
+    const skip = new Set(rig.shards || []);
+    for (const k in P) for (const c of P[k].children) if (c.isMesh && !skip.has(c)) e.hitMeshes.push({ m: c, crit: isUnder(c, hp) });
+    g.updateMatrixWorld(true); const all = new THREE.Box3().setFromObject(model);
+    e.hbBound = { y: (all.min.y + all.max.y) / 2, r: all.getSize(new V3()).length() * 0.5 * 1.3 + 0.3 };
+  }
   if (d.shield) {
     const sh = new THREE.Mesh(SPH, shieldMat(e.shieldEl)); const s = type === 'regent' ? 3.9 : 1.75;
     sh.scale.set(s * 0.85, s, s * 0.85); sh.position.y = type === 'regent' ? 3.4 : 1.45; g.add(sh); e.shieldMesh = sh;
@@ -600,8 +620,8 @@ function spawnEnemy(type, pos) {
   burst(new V3(e.pos.x, e.pos.y + 1, e.pos.z), 0xb066ff, 18, 5, 0.6, 2);
   return e;
 }
-function headPos(e, out = new V3()) { const h = e.d.head; return out.set(e.pos.x + Math.sin(e.yaw) * h.f, e.pos.y + h.y, e.pos.z + Math.cos(e.yaw) * h.f); }
-function centerPos(e, out = new V3()) { return out.set(e.pos.x, e.pos.y + e.d.body[0].y, e.pos.z); }
+function headPos(e, out = new V3()) { if (e.hbOk) return out.copy(e.hb[0]); const h = e.d.head; return out.set(e.pos.x + Math.sin(e.yaw) * h.f, e.pos.y + h.y, e.pos.z + Math.cos(e.yaw) * h.f); }
+function centerPos(e, out = new V3()) { if (e.hbOk) return out.copy(e.hb[1]); return out.set(e.pos.x, e.pos.y + e.d.body[0].y, e.pos.z); }
 
 function weaponDmgMult(power) {
   const pm = clamp(1 + (power - enemyPower) * 0.015, 0.6, 1.5);
@@ -936,6 +956,11 @@ function visualEnemy(e, dt) {
   if (e.flash > 0) e.flash -= dt;
   M.setEnemyFlash(e.rig, e.flash > 0 ? 1.4 : 0);
   if (e.shieldMesh) { e.shieldMesh.visible = e.shield > 0; const u = e.shieldMesh.material.uniforms; u.uTime.value = S.t; u.uHit.value = Math.max(0, u.uHit.value - dt * 5); }
+  if (e.hbAnch) {
+    e.mesh.updateMatrixWorld(true);
+    for (let i = 0; i < 3; i++) { const [piv, c, r] = e.hbAnch[i]; e.hb[i].copy(c).applyMatrix4(piv.matrixWorld); e.hbR[i] = r * piv.matrixWorld.getMaxScaleOnAxis(); }
+    e.hbOk = true;
+  }
 }
 
 // ---------------- Player damage ----------------
@@ -1036,16 +1061,38 @@ function aimAssist(dir) {
   }
   return bestDir ? dir.clone().lerp(bestDir, 0.75).normalize() : dir;
 }
+const _rc = new THREE.Raycaster(), _rcHits = [], _bc = new V3();
 function hitscan(o, dir, maxD) {
   let best = rayWorld(o, dir, maxD), be = null, crit = false;
   for (const e of enemies) {
     if (e.dead) continue;
-    const th = raySphere(o, dir, headPos(e, _v), e.d.head.r * 1.15);
-    if (th < best) { best = th; be = e; crit = true; }
-    for (const b of e.d.body) { _w.set(e.pos.x, e.pos.y + b.y, e.pos.z); const tb = raySphere(o, dir, _w, b.r); if (tb < best) { best = tb; be = e; crit = false; } }
+    if (e.hbOk) {
+      // quick reject with a sphere around the whole enemy, then test what is actually drawn
+      _bc.set(e.pos.x, e.pos.y + e.hbBound.y * e.mesh.scale.y, e.pos.z);
+      if (raySphere(o, dir, _bc, e.hbBound.r * Math.max(0.01, e.mesh.scale.x)) < best) {
+        _rc.ray.origin.copy(o); _rc.ray.direction.copy(dir); _rc.near = 0; _rc.far = best;
+        for (const hm of e.hitMeshes) {
+          _rcHits.length = 0; hm.m.raycast(_rc, _rcHits);
+          for (const h of _rcHits) if (h.distance < best) { best = h.distance; be = e; crit = hm.crit; }
+        }
+        // small forgiveness: part spheres centred on the visible head / torso / hips
+        const th = raySphere(o, dir, e.hb[0], e.hbR[0] * 1.05);
+        if (th < best) { best = th; be = e; crit = true; }
+        for (let i = 1; i < 3; i++) { const tb = raySphere(o, dir, e.hb[i], e.hbR[i] * 0.95); if (tb < best) { best = tb; be = e; crit = false; } }
+      }
+    } else {
+      const th = raySphere(o, dir, headPos(e, _v), e.d.head.r * 1.15);
+      if (th < best) { best = th; be = e; crit = true; }
+      for (const b of e.d.body) { _w.set(e.pos.x, e.pos.y + b.y, e.pos.z); const tb = raySphere(o, dir, _w, b.r); if (tb < best) { best = tb; be = e; crit = false; } }
+    }
     if (e.shield > 0 && e.shieldMesh) { _w.copy(e.shieldMesh.position).applyMatrix4(e.mesh.matrixWorld); const ts = raySphere(o, dir, _w, e.shieldMesh.scale.y * 0.9); if (ts < best) { best = ts; be = e; crit = false; } }
   }
   return { t: best, enemy: be, crit };
+}
+// projectiles leave the muzzle (below/right of the eye) but must converge on the point under the crosshair
+function convergeDir(mz, dir) {
+  const ht = hitscan(camera.position, dir, 200), aimPt = camera.position.clone().addScaledVector(dir, Math.max(4, Math.min(ht.t, 200)));
+  return aimPt.sub(mz).normalize();
 }
 function fireWeapon() {
   const w = wp[P.slot], item = curW();
@@ -1060,20 +1107,24 @@ function fireWeapon() {
   rumble(item.arch === 'hand' || item.arch === 'rocket' ? 0.55 : 0.18, item.arch === 'rocket' ? 0.9 : 0.35, item.arch === 'auto' || item.arch === 'mg' ? 40 : 80);
   vmKick = Math.min(1, vmKick + (item.arch === 'hand' || item.arch === 'rocket' ? 1 : 0.35));
   const kick = w.recoil * (1 - P.adsK * 0.4);
+  // aim from the camera centre through the crosshair as it is NOW (before this shot's recoil); the kick only moves the view afterwards
+  camera.position.copy(P.pos).add(new V3(0, EYE, 0)); camera.rotation.set(P.pitch + (P.vKick ?? P.kick), P.yaw + (P.vKickYaw ?? P.kickYaw), 0); camera.updateMatrixWorld();
   P.kick += kick; P.kickYaw += rand(-0.4, 0.4) * kick;
-  camera.position.copy(P.pos).add(new V3(0, EYE, 0)); camera.rotation.set(P.pitch - P.kick, P.yaw + P.kickYaw, 0);
   const moving = Math.hypot(P.vel.x, P.vel.z) > 1;
   const spread = w.spread * (1 - P.adsK * 0.7) * (moving ? 1.6 : 1) * (P.onGround ? 1 : 2);
   let dir = camDir(_d).clone();
   dir.x += rand(-1, 1) * spread; dir.y += rand(-1, 1) * spread; dir.z += rand(-1, 1) * spread; dir.normalize();
   dir = aimAssist(dir);
   const mz = muzzleWorld();
+  S.lastShot = { o: camera.position.clone(), d: dir.clone(), mz: mz.clone() };
   const elHex = L.ELEMENTS[item.element].hex;
   if (w.projectile) {
-    spawnProjectile({ pos: mz, vel: dir.clone().multiplyScalar(60), owner: 'p', dmg: w.dmg * weaponDmgMult(item.power), splash: w.splash, element: item.element, color: elHex === 0xe9e9e9 ? 0xffa040 : elHex, size: 1.0, core: 0xffffff, coreSize: 0.1, trail: 0xffb070, life: 5, r: 0.2 });
+    // converge: fly from the muzzle to the point under the crosshair (not parallel to the camera ray, which would land low/right)
+    const pdir = convergeDir(mz, dir);
+    spawnProjectile({ pos: mz, vel: pdir.multiplyScalar(60), owner: 'p', dmg: w.dmg * weaponDmgMult(item.power), splash: w.splash, element: item.element, color: elHex === 0xe9e9e9 ? 0xffa040 : elHex, size: 1.0, core: 0xffffff, coreSize: 0.1, trail: 0xffb070, life: 5, r: 0.2 });
     renderWeaponHud(); return;
   }
-  const h = hitscan(camera.position, dir, 200);
+  const h = hitscan(camera.position, dir, 200); S.lastShot.t = h.t;
   _hit.copy(camera.position).addScaledVector(dir, Math.min(h.t, 200));
   tracer(mz, _hit, elHex === 0xe9e9e9 ? 0xffe0a0 : elHex, 0.05);
   netShot(mz, _hit, elHex === 0xe9e9e9 ? 0xffe0a0 : elHex);
@@ -1152,8 +1203,8 @@ function castSuper() {
   else if (cls === 'storm') { P.superT = 9; P.superFireCd = 0; }
   else {
     P.superT = 0.6; P.shield = 100; P.over = 60;
-    const dir = camDir(new V3());
-    spawnProjectile({ pos: muzzleWorld(), vel: dir.multiplyScalar(30), owner: 'p', color: 0x9a4dff, size: 4, core: 0x1a0030, coreSize: 0.9, trail: 0xc080ff, life: 4, r: 0.6,
+    const mz = muzzleWorld(), dir = convergeDir(mz, camDir(new V3()));
+    spawnProjectile({ pos: mz, vel: dir.multiplyScalar(30), owner: 'p', color: 0x9a4dff, size: 4, core: 0x1a0030, coreSize: 0.9, trail: 0xc080ff, life: 4, r: 0.6,
       onHit: (p) => { explodeAt(p.pos, 11, 3200 * weaponDmgMult(powerLevel()), 'abyss'); explosionFx(p.pos, 11, 0x5a1aaa); } });
   }
 }
@@ -1226,7 +1277,8 @@ function updatePlayer(dt) {
   // camera
   camera.position.set(P.pos.x, P.pos.y + EYE, P.pos.z);
   S.shake = Math.max(0, (S.shake || 0) - dt * 1.8); const sh = S.shake * S.shake;
-  camera.rotation.set(P.pitch - P.kick + (Math.random() - 0.5) * sh * 0.08, P.yaw + P.kickYaw + (Math.random() - 0.5) * sh * 0.08, 0);
+  P.vKick = P.kick; P.vKickYaw = P.kickYaw; // recoil as drawn this frame (the next shot aims through exactly this crosshair)
+  camera.rotation.set(P.pitch + P.kick + (Math.random() - 0.5) * sh * 0.08, P.yaw + P.kickYaw + (Math.random() - 0.5) * sh * 0.08, 0);
   const zoom = wp[P.slot].zoom || 1.3;
   const fov = 74 / (1 + (zoom - 1) * P.adsK) + (sprinting ? 6 : 0);
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 12); camera.updateProjectionMatrix(); }
@@ -1341,7 +1393,7 @@ function clearRun() {
 function startRun() {
   initAudio(); clearRun();
   Object.assign(S, { mode: 'play', kills: 0, crits: 0, shots: 0, hits: 0, engrams: 0, runStart: S.t, revives: 3, waveQueue: [], betweenT: 0, boss: null, victory: false, finalDeath: false, bossPending: 0, adsT: 0 });
-  Object.assign(P, { hp: 100, shield: 100, over: 0, dead: false, slot: 0, reloadT: 0, swapT: 0, fireCd: 0, burstLeft: 0, grenCd: 0, meleeCd: 0, superCharge: DEBUG ? 100 : 0, superT: 0, kick: 0, kickYaw: 0, yaw: 0, pitch: 0 });
+  Object.assign(P, { hp: 100, shield: 100, over: 0, dead: false, slot: 0, reloadT: 0, swapT: 0, fireCd: 0, burstLeft: 0, grenCd: 0, meleeCd: 0, superCharge: DEBUG ? 100 : 0, superT: 0, kick: 0, kickYaw: 0, vKick: 0, vKickYaw: 0, yaw: 0, pitch: 0 });
   P.pos.set(0, 1.4, 0); P.vel.set(0, 0, 0); P.buffs = { bloodrush: 0, bloodrushT: 0, overcharge: 0, lastKill: -99 };
   camera.rotation.z = 0;
   loadWeapons(true);
@@ -2075,7 +2127,7 @@ function padUpdate(dt) {
     input.lookDX += rx * 3.4 * sens * ads * slow * dt; input.lookDY += ry * 2.6 * sens * ads * slow * dt * (save.invertY ? -1 : 1);
     // light magnetism: while moving or aiming, gently pull toward the target under the crosshair
     if (tgt && (Math.hypot(rx, ry) > 0.05 || Math.hypot(lx, ly) > 0.2 || b[BTN.L2])) {
-      const pull = Math.min(1, dt * 2.2) * 0.35, dyaw = tgt.yaw - P.yaw, dpi = tgt.pitch - P.pitch;
+      const pull = Math.min(1, dt * 2.2) * 0.35, dyaw = tgt.yaw - (P.yaw + P.kickYaw), dpi = tgt.pitch - (P.pitch + P.kick);
       P.yaw += Math.atan2(Math.sin(dyaw), Math.cos(dyaw)) * pull; P.pitch += dpi * pull;
     }
     if (down(BTN.R2)) input.fire = true; if (up(BTN.R2)) input.fire = false;
@@ -2156,5 +2208,5 @@ window.__game = {
   killAll: () => { for (const e of enemies.slice()) if (!e.dead) killEnemy(e, {}); S.waveQueue.length = 0; },
   spawnAt: (t, x, z) => spawnEnemy(t, new V3(x, groundAt(x, z, 5), z)),
   forceDown: () => { if (!P.dead) playerDie(); }, hostGame, joinGame, leaveCoop, toggleReady, coopCount, padNav, padActivate, get padFocus() { return PAD.focus && (PAD.focus.id || PAD.focus.textContent.trim().slice(0, 20)); },
-  renderer, NET, PAD, curW, IS_VISION, IS_TOUCH, visionPadCheck, net: () => NET, pad: () => PAD, camera,
+  renderer, NET, PAD, curW, IS_VISION, IS_TOUCH, visionPadCheck, net: () => NET, pad: () => PAD, camera, THREE, hitscan: (o, d) => hitscan(o, d, 200), convergeDir, muzzleWorld, aimAssist,
 };
